@@ -1,0 +1,4 @@
+node_modules/
+.next/
+.nextjs-bricks/
+__nex_ssr_brick__/
