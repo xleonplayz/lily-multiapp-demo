@@ -6,9 +6,9 @@ like on Lily.
 
 | App | Path | What it is | Reachable |
 |---|---|---|---|
-| `web` | `web/` | The shop: Next.js, lists products, takes orders | public |
-| `admin` | `admin/` | The back office: Next.js, orders, revenue, new products | public |
-| `api` | `api/` | The backend: Node HTTP server, the only app with database access | private, port 4000 |
+| `web` | `apps/web/` | The shop: Next.js, lists products, takes orders | public |
+| `admin` | `apps/admin/` | The back office: Next.js, orders, revenue, new products | public |
+| `api` | `services/api/` | The backend: Node HTTP server, the only app with database access | private, port 4000 |
 | `db` | separate source | PostgreSQL | private, port 5432 |
 
 ```
@@ -39,7 +39,7 @@ over one connection in order.
 
 ```
 docker run -d -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=shop postgres:16
-(cd api && npm ci && DATABASE_URL=postgresql://postgres@localhost:5432/shop node server.js)
-(cd web && npm ci && API_URL=http://localhost:4000 npx next dev -p 3000)
-(cd admin && npm ci && API_URL=http://localhost:4000 npx next dev -p 3001)
+(cd services/api && npm ci && DATABASE_URL=postgresql://postgres@localhost:5432/shop node server.js)
+(cd apps/web && npm ci && API_URL=http://localhost:4000 npx next dev -p 3000)
+(cd apps/admin && npm ci && API_URL=http://localhost:4000 npx next dev -p 3001)
 ```
