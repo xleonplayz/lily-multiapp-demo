@@ -18,22 +18,31 @@ async function db(path, init) {
   return body;
 }
 
-let seeded = (async () => {
-  const products = await db("/t/products");
-  if (products.length > 0) return;
-  for (const [name, price_cents, stock] of [
-    ["Kaffee, 500 g", 1290, 40],
-    ["Teebecher", 890, 25],
-    ["Notizbuch A5", 650, 60],
-    ["Stoffbeutel", 450, 80],
-  ]) {
-    await db("/t/products", { method: "POST", body: JSON.stringify({ name, price_cents, stock }) });
-  }
-})();
-seeded.catch((error) => {
-  console.error("seeding failed:", error.message);
-  seeded = null;
-});
+// The database may start empty again (a restart without a volume), so the
+// catalog is checked every 30 s and refilled when it is empty.
+let checkedAt = 0;
+let seeding = null;
+async function ensureSeeded() {
+  if (Date.now() - checkedAt < 30_000) return;
+  seeding ??= (async () => {
+    const products = await db("/t/products");
+    if (products.length === 0) {
+      for (const [name, price_cents, stock] of [
+        ["Kaffee, 500 g", 1290, 40],
+        ["Teebecher", 890, 25],
+        ["Notizbuch A5", 650, 60],
+        ["Stoffbeutel", 450, 80],
+      ]) {
+        await db("/t/products", { method: "POST", body: JSON.stringify({ name, price_cents, stock }) });
+      }
+    }
+    checkedAt = Date.now();
+  })().finally(() => {
+    seeding = null;
+  });
+  await seeding;
+}
+ensureSeeded().catch((error) => console.error("seeding failed:", error.message));
 
 function send(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -98,7 +107,7 @@ http.createServer(async (req, res) => {
   const route = routes[`${req.method} ${new URL(req.url, "http://api").pathname}`];
   if (!route) return send(res, 404, { error: "not found" });
   try {
-    if (seeded) await seeded;
+    await ensureSeeded();
     const [status, body] = await route(req);
     send(res, status, body);
   } catch (error) {
