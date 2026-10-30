@@ -1,16 +1,18 @@
-// The shop's database: a small record store on its own volume. Only the API
-// reaches it, over the project network. Every write is appended to a log on
-// disk before it is answered, and the log is replayed on start.
+// The shop's database: a small record store. Only the API reaches it, over
+// the project network. Every write is appended to a log on disk before it is
+// answered, and the log is replayed on start; where the disk is not
+// writable, the store keeps its records in memory and says so in /health.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 
 const PORT = Number(process.env.PORT || 7000);
-const DIR = process.env.DATA_DIR || "/data";
+const DIR = process.env.DATA_DIR || "data";
 const LOG = path.join(DIR, "records.log");
 const tables = new Map(); // table -> Map(id -> record)
 const counters = new Map(); // table -> last id
 let writes = 0;
+let persistent = true;
 
 function table(name) {
   if (!tables.has(name)) tables.set(name, new Map());
@@ -26,16 +28,28 @@ function apply(entry) {
 }
 
 function append(entry) {
-  fs.appendFileSync(LOG, JSON.stringify(entry) + "\n");
+  if (persistent) {
+    try {
+      fs.appendFileSync(LOG, JSON.stringify(entry) + "\n");
+    } catch (error) {
+      persistent = false;
+      console.error(`records stay in memory: ${error.message}`);
+    }
+  }
   apply(entry);
   writes += 1;
 }
 
-fs.mkdirSync(DIR, { recursive: true });
-if (fs.existsSync(LOG)) {
-  for (const line of fs.readFileSync(LOG, "utf8").split("\n")) {
-    if (line) apply(JSON.parse(line));
+try {
+  fs.mkdirSync(DIR, { recursive: true });
+  if (fs.existsSync(LOG)) {
+    for (const line of fs.readFileSync(LOG, "utf8").split("\n")) {
+      if (line) apply(JSON.parse(line));
+    }
   }
+} catch (error) {
+  persistent = false;
+  console.error(`records stay in memory: ${error.message}`);
 }
 
 function send(res, status, body) {
@@ -58,7 +72,7 @@ http.createServer(async (req, res) => {
     const parts = new URL(req.url, "http://db").pathname.split("/").filter(Boolean);
     if (req.method === "GET" && parts[0] === "health") {
       const records = [...tables.values()].reduce((n, rows) => n + rows.size, 0);
-      return send(res, 200, { service: "db", records, writes });
+      return send(res, 200, { service: "db", records, writes, persistent });
     }
     if (parts[0] !== "t" || !parts[1]) return send(res, 404, { error: "not found" });
     const name = parts[1];
