@@ -81,8 +81,9 @@ const routes = {
   },
   "POST /orders": async (req) => {
     const { product_id, quantity, customer } = await readJson(req);
-    const amount = Number(quantity);
-    if (!Number.isInteger(amount) || amount < 1 || !customer) return [400, { error: "product_id, quantity and customer required" }];
+    // A shop form left empty (or an old one sending 0) orders one piece.
+    const amount = Number(quantity) || 1;
+    if (!Number.isInteger(amount) || amount < 1 || !customer) return [400, { error: "Bitte Namen und eine Menge angeben." }];
     try {
       const product = await db(`/t/products/${Number(product_id)}/take`, { method: "POST",
         body: JSON.stringify({ field: "stock", amount }) });
