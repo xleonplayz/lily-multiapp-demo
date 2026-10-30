@@ -17,7 +17,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<Timed<T>
   }
 }
 
-export type Health = { service: string; database: string; database_ms: number; uptime_s: number; requests: number };
+export type Health = { service: string; database: string; database_ms: number; records: number; uptime_s: number; requests: number };
 export type Product = { id: number; name: string; price_cents: number; stock: number };
 export type Order = { id: number; quantity: number; customer: string; created_at: string; product: string; total_cents: number };
 export type Stats = { products: number; orders: number; revenue_cents: number };

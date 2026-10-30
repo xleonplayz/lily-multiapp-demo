@@ -9,11 +9,11 @@ like on Lily.
 | `web` | `apps/web/` | The shop: Next.js, lists products, takes orders | public |
 | `admin` | `apps/admin/` | The back office: Next.js, orders, revenue, new products | public |
 | `api` | `services/api/` | The backend: Node HTTP server, the only app with database access | private, port 4000 |
-| `db` | separate source | PostgreSQL | private, port 5432 |
+| `db` | `services/db/` | The database: a small record store, writes appended to a log on its own volume | private, port 7000 |
 
 ```
  browser ──► web  ──┐
-                    ├──► api :4000 ──► db :5432
+                    ├──► api :4000 ──► db :7000
  browser ──► admin ─┘
 ```
 
@@ -25,21 +25,23 @@ time each hop took, so a broken link is visible at once.
 | App | Variable | Value |
 |---|---|---|
 | `web`, `admin` | `API_URL` | `http://<api app>:4000` |
-| `api` | `DATABASE_URL` | `postgresql://postgres@<db app>:5432/shop` |
+| `api` | `DB_URL` | `http://<db app>:7000` |
 | `api` | `PORT` | `4000` |
+| `db` | `DATA_DIR` | the mounted volume, e.g. `/data` |
+| `db` | `PORT` | `7000` |
 
-Network edges: `web → api:4000`, `admin → api:4000`, `api → db:5432`.
-Only `web` and `admin` are exposed.
+Network edges: `web → api:4000`, `admin → api:4000`, `api → db:7000`.
+Only `web` and `admin` are exposed; `db` keeps its data on a volume.
 
-The API creates its tables and four sample products on first start. The
-database here serves one connection at a time, so the API sends its queries
-over one connection in order.
+The API adds four sample products on first start. The database keeps every
+record in memory, appends each write to `records.log` before answering, and
+replays the log when it starts, so data survives a restart.
 
 ## Running it without Lily
 
 ```
-docker run -d -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=shop postgres:16
-(cd services/api && npm ci && DATABASE_URL=postgresql://postgres@localhost:5432/shop node server.js)
+(cd services/db && DATA_DIR=./data node server.js)
+(cd services/api && DB_URL=http://localhost:7000 node server.js)
 (cd apps/web && npm ci && API_URL=http://localhost:4000 npx next dev -p 3000)
 (cd apps/admin && npm ci && API_URL=http://localhost:4000 npx next dev -p 3001)
 ```

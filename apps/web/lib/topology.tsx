@@ -14,7 +14,7 @@ export function Topology({ self, health }: { self: string; health: Timed<Health>
       <div className="edge">→ {health.ms} ms</div>
       {node("api", health.ok, health.ok ? `Node, privat · ${health.data.requests} Anfragen` : health.error)}
       <div className="edge">→ {health.ok ? `${health.data.database_ms} ms` : "?"}</div>
-      {node("db", health.ok && health.data.database === "ok", "PostgreSQL, privat")}
+      {node("db", health.ok && health.data.database === "ok", health.ok ? `Datenspeicher, privat · ${health.data.records} Datensätze` : "Datenspeicher, privat")}
     </div>
   );
 }

@@ -1,43 +1,39 @@
 // The shop's backend: the only app that talks to the database. The web shop
 // and the admin reach it over the project network; it has no public address.
 import http from "node:http";
-import pg from "pg";
 
 const PORT = Number(process.env.PORT || 4000);
+const DB = (process.env.DB_URL || "http://db:7000").replace(/\/$/, "");
 const started = Date.now();
 let requests = 0;
 
-// The database serves one connection at a time, so all queries share one
-// client and run in order.
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
-let queue = Promise.resolve();
-const query = (text, params) => {
-  const next = queue.then(() => db.query(text, params));
-  queue = next.catch(() => {});
-  return next;
-};
+async function db(path, init) {
+  const res = await fetch(DB + path, { ...init, headers: { "content-type": "application/json" } });
+  const body = await res.json();
+  if (!res.ok) {
+    const error = new Error(body.error || `database answered ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return body;
+}
 
-let ready = (async () => {
-  await db.connect();
-  await query(`CREATE TABLE IF NOT EXISTS products (
-    id SERIAL PRIMARY KEY, name TEXT NOT NULL, price_cents INTEGER NOT NULL,
-    stock INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await query(`CREATE TABLE IF NOT EXISTS orders (
-    id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id),
-    quantity INTEGER NOT NULL, customer TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  const { rows } = await query("SELECT count(*)::int AS n FROM products");
-  if (rows[0].n === 0) {
-    for (const [name, price, stock] of [
-      ["Kaffee, 500 g", 1290, 40],
-      ["Teebecher", 890, 25],
-      ["Notizbuch A5", 650, 60],
-      ["Stoffbeutel", 450, 80],
-    ]) {
-      await query("INSERT INTO products (name, price_cents, stock) VALUES ($1, $2, $3)", [name, price, stock]);
-    }
+let seeded = (async () => {
+  const products = await db("/t/products");
+  if (products.length > 0) return;
+  for (const [name, price_cents, stock] of [
+    ["Kaffee, 500 g", 1290, 40],
+    ["Teebecher", 890, 25],
+    ["Notizbuch A5", 650, 60],
+    ["Stoffbeutel", 450, 80],
+  ]) {
+    await db("/t/products", { method: "POST", body: JSON.stringify({ name, price_cents, stock }) });
   }
 })();
-ready.catch((error) => console.error("database setup failed:", error.message));
+seeded.catch((error) => {
+  console.error("seeding failed:", error.message);
+  seeded = null;
+});
 
 function send(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -53,45 +49,47 @@ async function readJson(req) {
 const routes = {
   "GET /health": async () => {
     const t0 = Date.now();
-    await query("SELECT 1");
-    return [200, { service: "api", database: "ok", database_ms: Date.now() - t0,
+    const database = await db("/health");
+    return [200, { service: "api", database: "ok", database_ms: Date.now() - t0, records: database.records,
       uptime_s: Math.round((Date.now() - started) / 1000), requests }];
   },
-  "GET /products": async () => {
-    const { rows } = await query("SELECT id, name, price_cents, stock FROM products ORDER BY id");
-    return [200, rows];
-  },
+  "GET /products": async () => [200, await db("/t/products")],
   "POST /products": async (req) => {
     const { name, price_cents, stock } = await readJson(req);
     if (!name || !Number.isInteger(price_cents) || price_cents < 0) return [400, { error: "name and price_cents required" }];
-    const { rows } = await query(
-      "INSERT INTO products (name, price_cents, stock) VALUES ($1, $2, $3) RETURNING id, name, price_cents, stock",
-      [name, price_cents, Number.isInteger(stock) ? stock : 0]);
-    return [201, rows[0]];
+    const product = await db("/t/products", { method: "POST",
+      body: JSON.stringify({ name, price_cents, stock: Number.isInteger(stock) ? stock : 0 }) });
+    return [201, product];
   },
   "GET /orders": async () => {
-    const { rows } = await query(`SELECT o.id, o.quantity, o.customer, o.created_at, p.name AS product,
-      o.quantity * p.price_cents AS total_cents FROM orders o JOIN products p ON p.id = o.product_id
-      ORDER BY o.id DESC LIMIT 50`);
-    return [200, rows];
+    const [orders, products] = await Promise.all([db("/t/orders"), db("/t/products")]);
+    const byId = new Map(products.map((p) => [p.id, p]));
+    return [200, orders.reverse().slice(0, 50).map((o) => ({
+      id: o.id, quantity: o.quantity, customer: o.customer, created_at: o.created_at,
+      product: byId.get(o.product_id)?.name ?? "?",
+      total_cents: o.quantity * (byId.get(o.product_id)?.price_cents ?? 0),
+    }))];
   },
   "POST /orders": async (req) => {
     const { product_id, quantity, customer } = await readJson(req);
     const amount = Number(quantity);
     if (!Number.isInteger(amount) || amount < 1 || !customer) return [400, { error: "product_id, quantity and customer required" }];
-    const { rows } = await query("UPDATE products SET stock = stock - $2 WHERE id = $1 AND stock >= $2 RETURNING name",
-      [Number(product_id), amount]);
-    if (rows.length === 0) return [409, { error: "not enough stock" }];
-    const order = await query("INSERT INTO orders (product_id, quantity, customer) VALUES ($1, $2, $3) RETURNING id",
-      [Number(product_id), amount, String(customer).slice(0, 80)]);
-    return [201, { id: order.rows[0].id, product: rows[0].name }];
+    try {
+      const product = await db(`/t/products/${Number(product_id)}/take`, { method: "POST",
+        body: JSON.stringify({ field: "stock", amount }) });
+      const order = await db("/t/orders", { method: "POST",
+        body: JSON.stringify({ product_id: product.id, quantity: amount, customer: String(customer).slice(0, 80) }) });
+      return [201, { id: order.id, product: product.name }];
+    } catch (error) {
+      if (error.status === 409) return [409, { error: "not enough stock" }];
+      throw error;
+    }
   },
   "GET /stats": async () => {
-    const { rows } = await query(`SELECT
-      (SELECT count(*)::int FROM products) AS products,
-      (SELECT count(*)::int FROM orders) AS orders,
-      (SELECT coalesce(sum(o.quantity * p.price_cents), 0)::int FROM orders o JOIN products p ON p.id = o.product_id) AS revenue_cents`);
-    return [200, rows[0]];
+    const [orders, products] = await Promise.all([db("/t/orders"), db("/t/products")]);
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const revenue_cents = orders.reduce((sum, o) => sum + o.quantity * (byId.get(o.product_id)?.price_cents ?? 0), 0);
+    return [200, { products: products.length, orders: orders.length, revenue_cents }];
   },
 };
 
@@ -100,10 +98,10 @@ http.createServer(async (req, res) => {
   const route = routes[`${req.method} ${new URL(req.url, "http://api").pathname}`];
   if (!route) return send(res, 404, { error: "not found" });
   try {
-    await ready;
+    if (seeded) await seeded;
     const [status, body] = await route(req);
     send(res, status, body);
   } catch (error) {
-    send(res, 500, { error: error.message });
+    send(res, 502, { error: error.message });
   }
-}).listen(PORT, () => console.log(`api listening on ${PORT}`));
+}).listen(PORT, () => console.log(`api listening on ${PORT}, database at ${DB}`));
