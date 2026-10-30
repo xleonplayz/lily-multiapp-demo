@@ -97,7 +97,7 @@ export default async function Shop({ searchParams }: { searchParams: Promise<{ o
                       <p>{look.text}</p>
                       <form className="order" action="/api/order" method="post">
                         <input type="hidden" name="product_id" value={p.id} />
-                        <input className="field" name="quantity" type="number" min={1} max={Math.max(1, p.stock)} defaultValue={1} aria-label="Menge" />
+                        <input className="field" name="quantity" type="number" min={1} max={Math.max(1, p.stock)} placeholder="1" aria-label="Menge" />
                         <input className="field" name="customer" placeholder="Ihr Name" required aria-label="Name" />
                         <button className="btn btn-primary" disabled={p.stock < 1}>
                           {p.stock < 1 ? "Ausverkauft" : "Jetzt bestellen"}

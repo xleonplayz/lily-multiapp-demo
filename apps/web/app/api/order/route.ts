@@ -7,7 +7,8 @@ export async function POST(request: Request) {
     method: "POST",
     body: JSON.stringify({
       product_id: Number(form.get("product_id")),
-      quantity: Number(form.get("quantity")),
+      // An empty quantity field means one piece.
+      quantity: Number(form.get("quantity") || 1),
       customer: String(form.get("customer") || ""),
     }),
   });
